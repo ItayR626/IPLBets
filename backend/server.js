@@ -10,23 +10,6 @@ const port = process.env.PORT || 3000;
 const crypto = require("crypto");
 const { isLoggedIn } = require("./middleware/auth");
 
-// Routes
-const loginRoute = require("./routes/loginRoute");
-const noticesRoute = require("./routes/noticeRoute");
-const documentsRoute = require("./routes/documentsRoute");
-const usersRoute = require("./routes/usersRoute");
-const suppliersRoute = require("./routes/supplierRoute");
-const productsRoute = require("./routes/productsRoute");
-const ordersRoute = require("./routes/ordersRoutes");
-const userProductsRequests = require("./routes/productsRequestRoutes");
-const getRequests = require("./routes/getRequestsRoutes");
-const emailRoute = require("./routes/emailRoute");
-const constraintsRoute = require("./routes/constraintsRoute");
-const meetingsRoute = require("./routes/meetingsRoute");
-const customerMeetingAdminRoutes = require("./routes/customerMeetingAdminRoute");
-const customerMeetingUserRoutes = require("./routes/customerMeetingUserRoute");
-const generalMeetingRoute = require("./routes/generalMeetingRoute");
-const notificationRoute = require("./routes/notificationRoute");
 
 // Session store options
 const options = {
@@ -77,28 +60,6 @@ app.use((req, res, next) => {
   console.log(req.url);
   next();
 });
-
-// Serve the uploads directory
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
-
-// Login route
-app.post("/", loginRoute);
-
-app.use("/notices", isLoggedIn, noticesRoute);
-app.use("/documents", isLoggedIn, documentsRoute);
-app.use("/users", isLoggedIn, usersRoute);
-app.use("/suppliers", isLoggedIn, suppliersRoute);
-app.use("/products", isLoggedIn, productsRoute);
-app.use("/orders", isLoggedIn, ordersRoute);
-app.use("/userProductsRequests", isLoggedIn, userProductsRequests);
-app.use("/getRequests", isLoggedIn, getRequests);
-app.use("/email", isLoggedIn, emailRoute);
-app.use("/constraints", isLoggedIn, constraintsRoute);
-app.use("/meetings", isLoggedIn, meetingsRoute);
-app.use("/customerMeetingsAdmin", isLoggedIn, customerMeetingAdminRoutes);
-app.use("/customerMeetingsUser", isLoggedIn, customerMeetingUserRoutes);
-app.use("/generalMeetings", isLoggedIn, generalMeetingRoute);
-app.use("/notification", isLoggedIn, notificationRoute);
 
 // Error handling for 404
 app.use((req, res, next) => {
