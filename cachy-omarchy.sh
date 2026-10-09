@@ -2,12 +2,14 @@
 # =============================================================================
 # cachy-omarchy.sh - Omarchy-style Hyprland setup for a fresh CachyOS install
 # =============================================================================
-# 1. Install CachyOS and choose "No Desktop" in the installer (bash as shell
-#    is recommended, but the script switches you to bash if you pick fish/zsh).
+# 1. Install CachyOS and choose "No Desktop" in the installer (any shell).
 # 2. Boot, log in on the TTY, connect to the internet, then run as YOUR USER:
-#        bash cachy-omarchy.sh
-#    Non-interactive:  AUTOLOGIN=1 APPS=1 bash cachy-omarchy.sh
-# 3. Reboot -> SDDM -> Hyprland (uwsm).
+#        bash cachy-omarchy.sh --yes
+#    Fully hands-off (asks only for your sudo password once, reboots at end):
+#        bash cachy-omarchy.sh --yes --reboot
+#    Options:  --yes  --autologin  --no-apps  --reboot  --help
+#    (env vars AUTOLOGIN=0/1 and APPS=0/1 also work)
+# 3. Reboot -> SDDM -> Hyprland (uwsm). Your shell is switched to zsh.
 #
 # Your old configs are backed up to ~/.config-backup-<timestamp>.
 # Targets Hyprland >= 0.55 (Lua config). Does not touch bootloader/partitions.
@@ -24,11 +26,37 @@ command -v pacman >/dev/null || die "This script is for CachyOS / Arch only."
 grep -qiE 'cachyos|arch' /etc/os-release || warn "Not CachyOS/Arch - continuing anyway."
 ping -c1 -W3 archlinux.org >/dev/null 2>&1 || die "No internet connection."
 
-# ----------------------------------------------------------------- questions
-ask() { # ask VAR "question" default(y|n)  - skipped if VAR already set in env
+# ----------------------------------------------------------------- options
+YES=0
+REBOOT=${REBOOT:-0}
+usage() {
+  cat <<USAGE
+Usage: bash cachy-omarchy.sh [options]
+  -y, --yes          never ask questions, use defaults (no auto-login, install apps)
+      --autologin    skip the SDDM login screen (only sensible with disk encryption)
+      --no-apps      skip LibreOffice / Obsidian / Signal / Spotify
+      --reboot       reboot automatically when finished
+  -h, --help         show this help
+USAGE
+}
+while (( $# )); do
+  case $1 in
+    -y|--yes)        YES=1 ;;
+    --autologin)     AUTOLOGIN=1 ;;
+    --no-autologin)  AUTOLOGIN=0 ;;
+    --apps)          APPS=1 ;;
+    --no-apps)       APPS=0 ;;
+    --reboot)        REBOOT=1 ;;
+    -h|--help)       usage; exit 0 ;;
+    *)               usage; die "Unknown option: $1" ;;
+  esac
+  shift
+done
+
+ask() { # ask VAR "question" default(y|n) - skipped if VAR is set, --yes, or no TTY
   local var=$1 q=$2 def=$3 ans
   if [[ -n "${!var:-}" ]]; then return; fi
-  if [[ -t 0 ]]; then
+  if (( ! YES )) && [[ -t 0 ]]; then
     read -rp "$q [y/n, default $def]: " ans
     ans=${ans:-$def}
   else
@@ -75,6 +103,11 @@ else
     && (cd "$tmp/yay-bin" && makepkg -si --noconfirm)
   AUR=yay
 fi
+if [[ $AUR == paru ]]; then
+  AUR_FLAGS=(--noconfirm --skipreview)
+else
+  AUR_FLAGS=(--noconfirm --answerclean None --answerdiff None --answeredit None --removemake)
+fi
 
 PKGS=(
   # compositor, session, portals, Xwayland
@@ -103,6 +136,8 @@ PKGS=(
   # shell + CLI
   starship eza bat fd ripgrep fzf zoxide btop fastfetch tree jq unzip wget
   curl pciutils python
+  # zsh + plugins
+  zsh zsh-autosuggestions zsh-syntax-highlighting zsh-completions
   # dev
   base-devel git github-cli lazygit neovim tree-sitter-cli mise
   docker docker-compose docker-buildx lazydocker
@@ -118,7 +153,7 @@ install_list() {
   local p
   for p in "$@"; do
     sudo pacman -S --needed --noconfirm "$p" \
-      || "$AUR" -S --needed --noconfirm "$p" \
+      || "$AUR" -S --needed "${AUR_FLAGS[@]}" "$p" \
       || FAILED+=("$p")
   done
 }
@@ -130,7 +165,7 @@ if (( APPS )); then
   say "Installing extra apps"
   for p in libreoffice-fresh obsidian signal-desktop spotify; do
     sudo pacman -S --needed --noconfirm "$p" 2>/dev/null \
-      || "$AUR" -S --needed --noconfirm "$p" \
+      || "$AUR" -S --needed "${AUR_FLAGS[@]}" "$p" \
       || FAILED+=("$p")
   done
 fi
@@ -144,9 +179,13 @@ fi
 say "Hyprland $HV detected"
 
 # ---------------------------------------------------------------- shell
-if [[ "$(getent passwd "$USER" | cut -d: -f7)" != */bash ]]; then
-  say "Switching login shell to bash (like Omarchy)"
-  sudo chsh -s /bin/bash "$USER"
+ZSH_BIN=$(command -v zsh || true)
+if [[ -z $ZSH_BIN ]]; then
+  FAILED+=(zsh); warn "zsh is not installed - keeping your current shell"
+elif [[ "$(getent passwd "$USER" | cut -d: -f7)" != "$ZSH_BIN" ]]; then
+  say "Switching login shell to zsh"
+  grep -qx "$ZSH_BIN" /etc/shells || echo "$ZSH_BIN" | sudo tee -a /etc/shells >/dev/null
+  sudo chsh -s "$ZSH_BIN" "$USER"
 fi
 
 # ---------------------------------------------------------------- services
@@ -179,7 +218,10 @@ mkdir -p "$CFG/cachy-omarchy"
 echo "$BG $FG $AC" > "$CFG/cachy-omarchy/theme"
 
 backup hypr waybar mako fuzzel alacritty starship.toml gtk-3.0 gtk-4.0
-[[ -f "$HOME/.bashrc" ]] && cp "$HOME/.bashrc" "$BACKUP/.bashrc"
+# keep the user's/CachyOS's existing zshrc (only if it is not ours from a previous run)
+if [[ -f "$HOME/.zshrc" ]] && ! grep -qF ">>> cachy-omarchy >>>" "$HOME/.zshrc"; then
+  cp "$HOME/.zshrc" "$BACKUP/.zshrc"
+fi
 
 # ---------------------------------------------------------------- Hyprland (Lua)
 say "Writing Hyprland config (hyprland.lua)"
@@ -636,33 +678,62 @@ success_symbol = "[❯](bold blue)"
 error_symbol = "[❯](bold red)"
 EOF
 
-if ! grep -qF ">>> cachy-omarchy >>>" "$HOME/.bashrc" 2>/dev/null; then
-  cat >> "$HOME/.bashrc" <<'EOF'
-
-# >>> cachy-omarchy >>>
+cat > "$HOME/.zshrc" <<'EOF'
+# >>> cachy-omarchy >>>  (generated - re-running the installer rewrites this file)
 export PATH="$HOME/.local/bin:$PATH"
 export EDITOR=nvim
-if [[ $- == *i* ]]; then
-  eval "$(starship init bash)"
-  eval "$(zoxide init bash --cmd cd)"
-  eval "$(mise activate bash)"
-  eval "$(fzf --bash)"
-  alias ls='eza --icons --group-directories-first'
-  alias ll='eza -l --icons --group-directories-first'
-  alias la='eza -la --icons --group-directories-first'
-  alias cat='bat --paging=never'
-  alias v='nvim'
-  alias lg='lazygit'
-  alias ld='lazydocker'
-  alias ff='fastfetch'
-fi
+
+# history
+HISTFILE=~/.zsh_history
+HISTSIZE=50000
+SAVEHIST=50000
+setopt SHARE_HISTORY HIST_IGNORE_DUPS HIST_IGNORE_SPACE HIST_REDUCE_BLANKS
+setopt AUTO_CD INTERACTIVE_COMMENTS
+
+# completion
+autoload -Uz compinit && compinit -d ~/.cache/zcompdump
+zstyle ':completion:*' menu select
+zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}'
+
+# keys
+bindkey -e
+autoload -U up-line-or-beginning-search down-line-or-beginning-search
+zle -N up-line-or-beginning-search
+zle -N down-line-or-beginning-search
+bindkey '^[[A' up-line-or-beginning-search
+bindkey '^[[B' down-line-or-beginning-search
+bindkey '^[OA' up-line-or-beginning-search
+bindkey '^[OB' down-line-or-beginning-search
+bindkey '^[[H'  beginning-of-line
+bindkey '^[[F'  end-of-line
+bindkey '^[[3~' delete-char
+bindkey '^[[1;5C' forward-word
+bindkey '^[[1;5D' backward-word
+
+# tools
+command -v starship >/dev/null && eval "$(starship init zsh)"
+command -v zoxide   >/dev/null && eval "$(zoxide init zsh --cmd cd)"
+command -v mise     >/dev/null && eval "$(mise activate zsh)"
+command -v fzf      >/dev/null && source <(fzf --zsh)
+
+# aliases
+alias ls='eza --icons --group-directories-first'
+alias ll='eza -l --icons --group-directories-first'
+alias la='eza -la --icons --group-directories-first'
+alias cat='bat --paging=never'
+alias v='nvim'
+alias lg='lazygit'
+alias ld='lazydocker'
+alias ff='fastfetch'
+
+# plugins (syntax-highlighting must be sourced last)
+[[ -f /usr/share/zsh/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh ]] \
+  && source /usr/share/zsh/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh
+[[ -f /usr/share/zsh/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ]] \
+  && source /usr/share/zsh/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
 # <<< cachy-omarchy <<<
 EOF
-fi
-
-# login shells (TTY) should also read .bashrc
-grep -q 'bashrc' "$HOME/.bash_profile" 2>/dev/null \
-  || echo '[[ -f ~/.bashrc ]] && . ~/.bashrc' >> "$HOME/.bash_profile"
+mkdir -p "$HOME/.cache"
 
 # LazyVim (Omarchy's default Neovim setup)
 if [[ ! -d "$CFG/nvim" ]]; then
@@ -794,10 +865,15 @@ Next steps
             SUPER+CTRL+W/B/A  wifi / bluetooth / audio
   4. Wallpaper: put any image at ~/.config/hypr/wall.png
   5. Old configs: $BACKUP
-  6. Log out/in once (a reboot does it) so the 'docker' group applies.
+  6. Your shell is now zsh (autosuggestions + syntax highlighting + starship).
+  7. A reboot also applies the 'docker' group.
 EOF
 
-if [[ -t 0 ]]; then
+if (( REBOOT )); then
+  say "Rebooting in 10 seconds (Ctrl+C to cancel)..."
+  sleep 10
+  sudo reboot
+elif (( ! YES )) && [[ -t 0 ]]; then
   read -rp "Reboot now? [y/N]: " r
   [[ $r =~ ^[Yy] ]] && sudo reboot
 fi
